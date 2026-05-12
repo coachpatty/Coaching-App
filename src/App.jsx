@@ -711,14 +711,68 @@ function TemplateLibrary({ setTab, setSelectedProgram }) {
   );
 }
 
+// ─── Library Search Dropdown ──────────────────────────────────────────────────
+function LibrarySearchDropdown({ libExercises, onSelect, placeholder }) {
+  const [query, setQuery] = useState("");
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  const filtered = libExercises.filter((e) =>
+    query === "" || e.name.toLowerCase().includes(query.toLowerCase()) || (e.category || "").toLowerCase().includes(query.toLowerCase())
+  );
+
+  const select = (ex) => { onSelect(ex); setQuery(""); setOpen(false); };
+
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <input
+        value={query}
+        onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
+        onFocus={() => setOpen(true)}
+        placeholder={placeholder || "Search library..."}
+        style={{ width: "100%" }}
+      />
+      {open && (
+        <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, background: "var(--surface)", border: "1px solid var(--border2)", borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-md)", zIndex: 200, maxHeight: "280px", overflowY: "auto" }}>
+          {filtered.length === 0 && (
+            <div style={{ padding: "16px", textAlign: "center", color: "var(--text3)", fontSize: "13px" }}>
+              {libExercises.length === 0 ? "Library is empty — add exercises in Exercise Library first." : "No matches. You can still add manually below."}
+            </div>
+          )}
+          {filtered.map((ex) => (
+            <div key={ex.id} onClick={() => select(ex)}
+              style={{ display: "flex", alignItems: "center", gap: "10px", padding: "10px 14px", cursor: "pointer", borderBottom: "1px solid var(--border)", transition: "background 0.1s" }}
+              onMouseEnter={(e) => e.currentTarget.style.background = "var(--surface2)"}
+              onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}>
+              <div style={{ flex: 1 }}>
+                <p style={{ fontWeight: "600", fontSize: "14px", color: "var(--text)" }}>{ex.name}</p>
+                {ex.description && <p style={{ fontSize: "11px", color: "var(--text3)", marginTop: "1px" }}>{ex.description.slice(0, 60)}{ex.description.length > 60 ? "..." : ""}</p>}
+              </div>
+              <span className="tag tag-blue" style={{ flexShrink: 0 }}>{ex.category}</span>
+              {ex.defaultSets && <span style={{ fontSize: "11px", color: "var(--text3)", flexShrink: 0 }}>{ex.defaultSets}×{ex.defaultReps}</span>}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Program Editor ───────────────────────────────────────────────────────────
 function ProgramEditor({ program, setTab, setSelectedProgram }) {
   const [prog, setProg] = useState(program);
   const [showAddEx, setShowAddEx] = useState(false);
   const [showVideo, setShowVideo] = useState(null);
-  const [showLibPicker, setShowLibPicker] = useState(false);
   const [libExercises, setLibExercises] = useState([]);
-  const [exForm, setExForm] = useState({ name: "", type: "weight", sets: "3", reps: "8", videoUrl: "", notes: "" });
+  const [exForm, setExForm] = useState({ name: "", type: "weight", sets: "3", reps: "8", videoUrl: "", notes: "", restSeconds: "60" });
+  const [editingNotes, setEditingNotes] = useState(false);
+  const [progNotes, setProgNotes] = useState(program.programNotes || "");
 
   useEffect(() => { fbList("exerciseLibrary").then(setLibExercises); }, []);
 
@@ -727,29 +781,73 @@ function ProgramEditor({ program, setTab, setSelectedProgram }) {
     setProg(updated); setSelectedProgram(updated);
   };
 
+  const saveProgNotes = async () => {
+    await fbUpdate("programs/" + prog.id, { programNotes: progNotes });
+    setProg((p) => ({ ...p, programNotes: progNotes }));
+    setEditingNotes(false);
+  };
+
   const addEx = () => {
     if (!exForm.name) return;
-    const ex = { id: uid(), name: exForm.name, type: exForm.type, sets: parseInt(exForm.sets), reps: exForm.reps, videoUrl: exForm.videoUrl, notes: exForm.notes };
+    const ex = { id: uid(), name: exForm.name, type: exForm.type, sets: parseInt(exForm.sets), reps: exForm.reps, videoUrl: exForm.videoUrl, notes: exForm.notes, restSeconds: parseInt(exForm.restSeconds) || 60 };
     save({ ...prog, exercises: [...(prog.exercises || []), ex] });
-    setShowAddEx(false); setExForm({ name: "", type: "weight", sets: "3", reps: "8", videoUrl: "", notes: "" });
+    setShowAddEx(false); setExForm({ name: "", type: "weight", sets: "3", reps: "8", videoUrl: "", notes: "", restSeconds: "60" });
   };
 
   const addFromLib = (lib) => {
-    const ex = { id: uid(), name: lib.name, type: "weight", sets: 3, reps: "8", videoUrl: lib.videoUrl || "", notes: lib.description || "" };
+    const ex = {
+      id: uid(), name: lib.name,
+      type: lib.defaultType || "weight",
+      sets: lib.defaultSets || 3,
+      reps: lib.defaultReps || "8",
+      videoUrl: lib.videoUrl || "",
+      notes: lib.description || "",
+      restSeconds: lib.defaultRest || 60
+    };
     save({ ...prog, exercises: [...(prog.exercises || []), ex] });
-    setShowLibPicker(false);
+    setShowAddEx(false); setExForm({ name: "", type: "weight", sets: "3", reps: "8", videoUrl: "", notes: "", restSeconds: "60" });
+  };
+
+  const prefillFromLib = (lib) => {
+    setExForm({
+      name: lib.name,
+      type: lib.defaultType || "weight",
+      sets: String(lib.defaultSets || 3),
+      reps: lib.defaultReps || "8",
+      videoUrl: lib.videoUrl || "",
+      notes: lib.description || "",
+      restSeconds: String(lib.defaultRest || 60)
+    });
   };
 
   const updateEx = (id, field, val) => {
     const exercises = (prog.exercises || []).map((e) => {
       if (e.id !== id) return e;
-      if (field === "sets") return { ...e, sets: parseInt(val) || 1 };
+      if (field === "sets" || field === "restSeconds") return { ...e, [field]: parseInt(val) || 0 };
       return { ...e, [field]: val };
     });
     save({ ...prog, exercises });
   };
 
   const delEx = (id) => save({ ...prog, exercises: (prog.exercises || []).filter((e) => e.id !== id) });
+
+  const moveEx = (id, dir) => {
+    const exs = [...(prog.exercises || [])];
+    const i = exs.findIndex((e) => e.id === id);
+    if (i < 0) return;
+    const newI = i + dir;
+    if (newI < 0 || newI >= exs.length) return;
+    const tmp = exs[i]; exs[i] = exs[newI]; exs[newI] = tmp;
+    save({ ...prog, exercises: exs });
+  };
+
+  const duplicateEx = (ex) => {
+    const copy = { ...ex, id: uid(), name: ex.name + " (copy)" };
+    const exs = [...(prog.exercises || [])];
+    const i = exs.findIndex((e) => e.id === ex.id);
+    exs.splice(i + 1, 0, copy);
+    save({ ...prog, exercises: exs });
+  };
 
   const backTab = prog.isTemplate ? "templates" : "programs";
 
@@ -760,32 +858,56 @@ function ProgramEditor({ program, setTab, setSelectedProgram }) {
         <h1 style={{ fontSize: "24px", fontWeight: "800" }}>{prog.name}</h1>
         {prog.isTemplate ? <span className="tag tag-purple">Template</span> : <span className="tag tag-blue">{prog.weeks} weeks</span>}
       </div>
-      <p style={{ fontSize: "13px", color: "var(--text2)", marginBottom: "28px" }}>
+      <p style={{ fontSize: "13px", color: "var(--text2)", marginBottom: "16px" }}>
         {prog.isTemplate ? (prog.tag || "General") + " · " + prog.weeks + " weeks" : "Client program · " + (prog.exercises || []).length + " exercises"}
       </p>
 
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "16px" }}>
-        <h2 style={{ fontSize: "17px", fontWeight: "700" }}>Exercises</h2>
-        <div style={{ display: "flex", gap: "8px" }}>
-          <button className="btn-ghost btn-sm" onClick={() => setShowLibPicker(true)}>From library</button>
-          <button className="btn-primary btn-sm" onClick={() => setShowAddEx(true)}>+ Add exercise</button>
+      {/* Program notes */}
+      <div className="card" style={{ marginBottom: "24px", padding: "14px 18px" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: editingNotes ? "10px" : "0" }}>
+          <p style={{ fontSize: "13px", fontWeight: "600", color: "var(--text2)" }}>📋 Program notes (visible to client)</p>
+          {!editingNotes && <button className="btn-ghost btn-sm" onClick={() => setEditingNotes(true)}>{prog.programNotes ? "Edit" : "+ Add notes"}</button>}
         </div>
+        {!editingNotes && prog.programNotes && <p style={{ fontSize: "13px", color: "var(--text)", lineHeight: "1.6", marginTop: "8px" }}>{prog.programNotes}</p>}
+        {!editingNotes && !prog.programNotes && <p style={{ fontSize: "12px", color: "var(--text3)", marginTop: editingNotes ? "0" : "4px" }}>No notes yet. Add context, goals, or instructions for your client.</p>}
+        {editingNotes && (
+          <div>
+            <textarea value={progNotes} onChange={(e) => setProgNotes(e.target.value)} rows={3} style={{ resize: "vertical", width: "100%" }} placeholder="e.g. Focus on form over weight. Rest 2 mins between heavy sets. Contact me if anything feels off." />
+            <div style={{ display: "flex", gap: "8px", marginTop: "10px", justifyContent: "flex-end" }}>
+              <button className="btn-ghost btn-sm" onClick={() => { setEditingNotes(false); setProgNotes(prog.programNotes || ""); }}>Cancel</button>
+              <button className="btn-primary btn-sm" onClick={saveProgNotes}>Save notes</button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "16px" }}>
+        <h2 style={{ fontSize: "17px", fontWeight: "700" }}>Exercises <span style={{ fontSize: "13px", fontWeight: "400", color: "var(--text3)" }}>{(prog.exercises || []).length} total</span></h2>
+        <button className="btn-primary btn-sm" onClick={() => setShowAddEx(true)}>+ Add exercise</button>
       </div>
 
       {(prog.exercises || []).map((ex, idx) => (
         <div key={ex.id} className="exercise-row">
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "12px" }}>
             <div style={{ display: "flex", alignItems: "center", gap: "8px", flex: 1 }}>
+              {/* Reorder arrows */}
+              <div style={{ display: "flex", flexDirection: "column", gap: "2px", flexShrink: 0 }}>
+                <button onClick={() => moveEx(ex.id, -1)} disabled={idx === 0}
+                  style={{ width: "20px", height: "18px", background: "var(--surface2)", border: "1px solid var(--border2)", borderRadius: "4px", fontSize: "10px", cursor: idx === 0 ? "not-allowed" : "pointer", opacity: idx === 0 ? 0.3 : 1, display: "flex", alignItems: "center", justifyContent: "center" }}>▲</button>
+                <button onClick={() => moveEx(ex.id, 1)} disabled={idx === (prog.exercises || []).length - 1}
+                  style={{ width: "20px", height: "18px", background: "var(--surface2)", border: "1px solid var(--border2)", borderRadius: "4px", fontSize: "10px", cursor: idx === (prog.exercises || []).length - 1 ? "not-allowed" : "pointer", opacity: idx === (prog.exercises || []).length - 1 ? 0.3 : 1, display: "flex", alignItems: "center", justifyContent: "center" }}>▼</button>
+              </div>
               <span style={{ fontSize: "12px", color: "var(--text3)", fontFamily: "Syne, sans-serif", fontWeight: "700", background: "var(--surface2)", padding: "2px 8px", borderRadius: "6px", flexShrink: 0 }}>{"#" + (idx + 1)}</span>
-              <input value={ex.name} onChange={(e) => updateEx(ex.id, "name", e.target.value)} style={{ fontWeight: "700", fontSize: "15px", background: "transparent", border: "none", padding: "0", boxShadow: "none", minWidth: "160px" }} />
+              <input value={ex.name} onChange={(e) => updateEx(ex.id, "name", e.target.value)} style={{ fontWeight: "700", fontSize: "15px", background: "transparent", border: "none", padding: "0", boxShadow: "none", minWidth: "140px", flex: 1 }} />
               <span className={"tag " + (ex.type === "weight" ? "tag-green" : "tag-blue")}>{ex.type === "weight" ? "Weight" : "Time"}</span>
             </div>
-            <div style={{ display: "flex", gap: "8px" }}>
-              {ex.videoUrl && <button className="btn-ghost btn-sm" onClick={() => setShowVideo(ex)}>▶ Preview</button>}
+            <div style={{ display: "flex", gap: "6px", flexShrink: 0 }}>
+              {ex.videoUrl && <button className="btn-ghost btn-sm" onClick={() => setShowVideo(ex)}>▶</button>}
+              <button className="btn-ghost btn-sm" title="Duplicate" onClick={() => duplicateEx(ex)} style={{ fontSize: "13px" }}>⧉</button>
               <button className="btn-danger btn-sm" onClick={() => delEx(ex.id)}>✕</button>
             </div>
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 2fr", gap: "10px", marginBottom: "10px" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr 2fr", gap: "8px", marginBottom: "10px" }}>
             <div><label>Sets</label><input type="number" value={ex.sets} onChange={(e) => updateEx(ex.id, "sets", e.target.value)} /></div>
             <div><label>{ex.type === "weight" ? "Reps" : "Seconds"}</label><input value={ex.reps} onChange={(e) => updateEx(ex.id, "reps", e.target.value)} /></div>
             <div><label>Type</label>
@@ -794,54 +916,40 @@ function ProgramEditor({ program, setTab, setSelectedProgram }) {
                 <option value="time">Time</option>
               </select>
             </div>
+            <div><label>Rest (sec)</label><input type="number" value={ex.restSeconds || 60} onChange={(e) => updateEx(ex.id, "restSeconds", e.target.value)} /></div>
             <div><label>Video URL</label><input value={ex.videoUrl} onChange={(e) => updateEx(ex.id, "videoUrl", e.target.value)} placeholder="https://youtube.com/watch?v=..." /></div>
           </div>
-          <div><label>Coaching notes</label><input value={ex.notes} onChange={(e) => updateEx(ex.id, "notes", e.target.value)} placeholder="Technique cues, tempo..." /></div>
+          <div><label>Coaching notes</label><input value={ex.notes} onChange={(e) => updateEx(ex.id, "notes", e.target.value)} placeholder="Technique cues, tempo, focus points..." /></div>
         </div>
       ))}
 
       {(prog.exercises || []).length === 0 && (
         <div style={{ textAlign: "center", padding: "48px 24px", background: "var(--surface)", border: "2px dashed var(--border2)", borderRadius: "var(--radius-lg)" }}>
           <div style={{ fontSize: "36px", marginBottom: "12px" }}>🏋️</div>
-          <p style={{ color: "var(--text2)", marginBottom: "16px" }}>No exercises yet.</p>
-          <div style={{ display: "flex", gap: "10px", justifyContent: "center" }}>
-            <button className="btn-ghost" onClick={() => setShowLibPicker(true)}>From library</button>
-            <button className="btn-primary" onClick={() => setShowAddEx(true)}>+ Add exercise</button>
-          </div>
+          <p style={{ color: "var(--text2)", marginBottom: "16px" }}>No exercises yet. Search your library or add a new one.</p>
+          <button className="btn-primary" onClick={() => setShowAddEx(true)}>+ Add exercise</button>
         </div>
       )}
 
-      {showLibPicker && (
-        <div className="modal-overlay" onClick={() => setShowLibPicker(false)}>
-          <div className="modal modal-lg" onClick={(e) => e.stopPropagation()}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
-              <h2 style={{ fontFamily: "Syne, sans-serif", fontSize: "20px", fontWeight: "700" }}>Add from library</h2>
-              <button className="btn-ghost btn-sm" onClick={() => setShowLibPicker(false)}>✕ Close</button>
-            </div>
-            {libExercises.length === 0 && <p style={{ color: "var(--text2)" }}>Library is empty. Add exercises in Exercise Library first.</p>}
-            <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-              {libExercises.map((ex) => (
-                <div key={ex.id} style={{ display: "flex", alignItems: "center", gap: "12px", padding: "12px 14px", background: "var(--surface2)", borderRadius: "var(--radius)", border: "1px solid var(--border)" }}>
-                  <div style={{ flex: 1 }}>
-                    <p style={{ fontWeight: "600", fontSize: "14px" }}>{ex.name}</p>
-                    {ex.description && <p style={{ fontSize: "12px", color: "var(--text2)", marginTop: "2px" }}>{ex.description.slice(0, 80)}{ex.description.length > 80 ? "..." : ""}</p>}
-                  </div>
-                  <span className="tag tag-blue">{ex.category}</span>
-                  <button className="btn-primary btn-sm" onClick={() => addFromLib(ex)}>+ Add</button>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-
+      {/* Unified Add Exercise modal with library search at top */}
       {showAddEx && (
         <div className="modal-overlay" onClick={() => setShowAddEx(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h2 style={{ fontFamily: "Syne, sans-serif", fontSize: "20px", fontWeight: "700", marginBottom: "20px" }}>Add exercise</h2>
-            <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+            <h2 style={{ fontFamily: "Syne, sans-serif", fontSize: "20px", fontWeight: "700", marginBottom: "6px" }}>Add exercise</h2>
+            <p style={{ fontSize: "13px", color: "var(--text2)", marginBottom: "16px" }}>Search your library to auto-fill, or fill in manually below.</p>
+
+            <div style={{ marginBottom: "16px" }}>
+              <label>Search library</label>
+              <LibrarySearchDropdown
+                libExercises={libExercises}
+                onSelect={prefillFromLib}
+                placeholder="Type to search your library..."
+              />
+            </div>
+
+            <div style={{ borderTop: "1px solid var(--border)", paddingTop: "16px", display: "flex", flexDirection: "column", gap: "12px" }}>
               <div><label>Exercise name</label><input value={exForm.name} onChange={(e) => setExForm({ ...exForm, name: e.target.value })} placeholder="e.g. Back Squat" /></div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "10px" }}>
                 <div><label>Sets</label><input type="number" value={exForm.sets} onChange={(e) => setExForm({ ...exForm, sets: e.target.value })} /></div>
                 <div><label>Type</label>
                   <select value={exForm.type} onChange={(e) => setExForm({ ...exForm, type: e.target.value })}>
@@ -849,14 +957,15 @@ function ProgramEditor({ program, setTab, setSelectedProgram }) {
                     <option value="time">Time (seconds)</option>
                   </select>
                 </div>
+                <div><label>Rest (sec)</label><input type="number" value={exForm.restSeconds} onChange={(e) => setExForm({ ...exForm, restSeconds: e.target.value })} /></div>
               </div>
-              <div><label>{exForm.type === "weight" ? "Reps" : "Seconds"}</label><input value={exForm.reps} onChange={(e) => setExForm({ ...exForm, reps: e.target.value })} /></div>
+              <div><label>{exForm.type === "weight" ? "Reps" : "Seconds"}</label><input value={exForm.reps} onChange={(e) => setExForm({ ...exForm, reps: e.target.value })} placeholder={exForm.type === "weight" ? "e.g. 8 or 6-8" : "e.g. 30"} /></div>
               <div><label>Video URL</label><input value={exForm.videoUrl} onChange={(e) => setExForm({ ...exForm, videoUrl: e.target.value })} placeholder="https://youtube.com/watch?v=..." /></div>
-              <div><label>Coaching notes</label><textarea value={exForm.notes} onChange={(e) => setExForm({ ...exForm, notes: e.target.value })} placeholder="Technique cues..." rows={2} style={{ resize: "vertical" }} /></div>
+              <div><label>Coaching notes</label><textarea value={exForm.notes} onChange={(e) => setExForm({ ...exForm, notes: e.target.value })} placeholder="Technique cues, focus points..." rows={2} style={{ resize: "vertical" }} /></div>
             </div>
             <div style={{ display: "flex", gap: "10px", marginTop: "16px", justifyContent: "flex-end" }}>
               <button className="btn-ghost" onClick={() => setShowAddEx(false)}>Cancel</button>
-              <button className="btn-primary" onClick={addEx}>Add exercise</button>
+              <button className="btn-primary" onClick={addEx}>Add to program</button>
             </div>
           </div>
         </div>
@@ -879,13 +988,16 @@ function ProgramEditor({ program, setTab, setSelectedProgram }) {
 }
 
 // ─── Exercise Library ─────────────────────────────────────────────────────────
+const BLANK_FORM = { name: "", category: "Legs", description: "", videoUrl: "", defaultSets: "3", defaultReps: "8", defaultType: "weight", defaultRest: "60" };
+
 function ExerciseLibrary() {
   const [lib, setLib] = useState([]);
-  const [showAdd, setShowAdd] = useState(false);
+  const [showModal, setShowModal] = useState(false);
+  const [editingId, setEditingId] = useState(null);
   const [showVideo, setShowVideo] = useState(null);
   const [filterCat, setFilterCat] = useState("All");
   const [search, setSearch] = useState("");
-  const [form, setForm] = useState({ name: "", category: "Legs", description: "", videoUrl: "" });
+  const [form, setForm] = useState(BLANK_FORM);
 
   useEffect(() => { fbList("exerciseLibrary").then(setLib); }, []);
 
@@ -895,11 +1007,23 @@ function ExerciseLibrary() {
     return mc && ms;
   });
 
-  const add = async () => {
+  const openAdd = () => { setForm(BLANK_FORM); setEditingId(null); setShowModal(true); };
+  const openEdit = (ex) => {
+    setForm({ name: ex.name, category: ex.category || "Legs", description: ex.description || "", videoUrl: ex.videoUrl || "", defaultSets: String(ex.defaultSets || 3), defaultReps: ex.defaultReps || "8", defaultType: ex.defaultType || "weight", defaultRest: String(ex.defaultRest || 60) });
+    setEditingId(ex.id); setShowModal(true);
+  };
+
+  const save = async () => {
     if (!form.name) return;
-    const ref = await fbAdd("exerciseLibrary", form);
-    setLib((prev) => [...prev, { id: ref.id, ...form }]);
-    setShowAdd(false); setForm({ name: "", category: "Legs", description: "", videoUrl: "" });
+    const data = { name: form.name, category: form.category, description: form.description, videoUrl: form.videoUrl, defaultSets: parseInt(form.defaultSets) || 3, defaultReps: form.defaultReps, defaultType: form.defaultType, defaultRest: parseInt(form.defaultRest) || 60 };
+    if (editingId) {
+      await fbUpdate("exerciseLibrary/" + editingId, data);
+      setLib((prev) => prev.map((e) => e.id === editingId ? { ...e, ...data } : e));
+    } else {
+      const ref = await fbAdd("exerciseLibrary", data);
+      setLib((prev) => [...prev, { id: ref.id, ...data }]);
+    }
+    setShowModal(false);
   };
 
   const del = async (id) => {
@@ -910,15 +1034,16 @@ function ExerciseLibrary() {
 
   return (
     <div>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "20px" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "8px" }}>
         <div>
           <h1 style={{ fontSize: "26px", fontWeight: "800" }}>Exercise Library</h1>
-          <p style={{ color: "var(--text2)", fontSize: "14px", marginTop: "2px" }}>{lib.length} exercises</p>
+          <p style={{ color: "var(--text2)", fontSize: "14px", marginTop: "2px" }}>{lib.length} exercises · defaults auto-fill when adding to programs</p>
         </div>
-        <button className="btn-primary" onClick={() => setShowAdd(true)}>+ Add exercise</button>
+        <button className="btn-primary" onClick={openAdd}>+ Add exercise</button>
       </div>
-      <div style={{ display: "flex", gap: "10px", marginBottom: "20px", flexWrap: "wrap", alignItems: "center" }}>
-        <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search..." style={{ maxWidth: "220px" }} />
+
+      <div style={{ display: "flex", gap: "10px", margin: "20px 0", flexWrap: "wrap", alignItems: "center" }}>
+        <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search exercises..." style={{ maxWidth: "220px" }} />
         <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
           {CATEGORIES.map((c) => (
             <button key={c} onClick={() => setFilterCat(c)} style={{ padding: "5px 14px", borderRadius: "20px", fontSize: "12px", fontWeight: "600",
@@ -931,46 +1056,76 @@ function ExerciseLibrary() {
           ))}
         </div>
       </div>
-      {filtered.length === 0 && <div className="empty-state"><div className="empty-icon">⊞</div><p>No exercises found.</p></div>}
+
+      {filtered.length === 0 && <div className="empty-state"><div className="empty-icon">⊞</div><p>No exercises found. Add your first one!</p></div>}
+
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
         {filtered.map((ex) => (
           <div key={ex.id} className="card">
-            <div style={{ display: "flex", alignItems: "flex-start", gap: "8px", marginBottom: "6px" }}>
+            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: "6px" }}>
               <div style={{ flex: 1 }}>
                 <p style={{ fontWeight: "700", fontSize: "15px" }}>{ex.name}</p>
-                <span className="tag tag-blue" style={{ marginTop: "4px" }}>{ex.category}</span>
+                <div style={{ display: "flex", gap: "6px", marginTop: "4px", flexWrap: "wrap" }}>
+                  <span className="tag tag-blue">{ex.category}</span>
+                  <span className="tag tag-gray">{ex.defaultType === "time" ? "Time" : "Weight"}</span>
+                </div>
               </div>
             </div>
-            {ex.description && <p style={{ fontSize: "13px", color: "var(--text2)", lineHeight: "1.5", marginTop: "6px" }}>{ex.description}</p>}
+            {/* Default values display */}
+            <div style={{ display: "flex", gap: "10px", marginTop: "8px", marginBottom: "6px" }}>
+              <span style={{ fontSize: "12px", color: "var(--text2)" }}>Default: <strong>{ex.defaultSets || 3} sets</strong></span>
+              <span style={{ fontSize: "12px", color: "var(--text2)" }}><strong>{ex.defaultReps || "8"} {ex.defaultType === "time" ? "sec" : "reps"}</strong></span>
+              <span style={{ fontSize: "12px", color: "var(--text2)" }}>Rest: <strong>{ex.defaultRest || 60}s</strong></span>
+            </div>
+            {ex.description && <p style={{ fontSize: "13px", color: "var(--text2)", lineHeight: "1.5", marginTop: "4px" }}>{ex.description}</p>}
             <div style={{ display: "flex", gap: "8px", marginTop: "10px" }}>
               {ex.videoUrl ? <button className="btn-ghost btn-sm" onClick={() => setShowVideo(ex)} style={{ fontSize: "12px" }}>▶ Demo</button> : <span style={{ fontSize: "12px", color: "var(--text3)" }}>No video</span>}
               <div style={{ flex: 1 }} />
+              <button className="btn-ghost btn-sm" onClick={() => openEdit(ex)}>Edit</button>
               <button className="btn-danger btn-sm" onClick={() => del(ex.id)}>Remove</button>
             </div>
           </div>
         ))}
       </div>
-      {showAdd && (
-        <div className="modal-overlay" onClick={() => setShowAdd(false)}>
+
+      {showModal && (
+        <div className="modal-overlay" onClick={() => setShowModal(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h2 style={{ fontFamily: "Syne, sans-serif", fontSize: "20px", fontWeight: "700", marginBottom: "20px" }}>Add to library</h2>
-            <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+            <h2 style={{ fontFamily: "Syne, sans-serif", fontSize: "20px", fontWeight: "700", marginBottom: "20px" }}>{editingId ? "Edit exercise" : "Add to library"}</h2>
+            <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
               <div><label>Exercise name</label><input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. Bulgarian Split Squat" /></div>
               <div><label>Category</label>
                 <select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
                   {CATEGORIES.filter((c) => c !== "All").map((c) => <option key={c} value={c}>{c}</option>)}
                 </select>
               </div>
-              <div><label>Description / coaching notes</label><textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="Technique cues, common mistakes..." rows={3} style={{ resize: "vertical" }} /></div>
-              <div><label>Video URL</label><input value={form.videoUrl} onChange={(e) => setForm({ ...form, videoUrl: e.target.value })} placeholder="https://youtube.com/watch?v=..." /></div>
+
+              <div style={{ background: "var(--accent-light)", border: "1px solid rgba(77,184,42,0.2)", borderRadius: "var(--radius)", padding: "12px 14px" }}>
+                <p style={{ fontSize: "12px", fontWeight: "600", color: "var(--accent-dark)", marginBottom: "10px" }}>⚡ Default values (auto-fill when adding to programs)</p>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: "8px" }}>
+                  <div><label>Default sets</label><input type="number" value={form.defaultSets} onChange={(e) => setForm({ ...form, defaultSets: e.target.value })} /></div>
+                  <div><label>Default reps/sec</label><input value={form.defaultReps} onChange={(e) => setForm({ ...form, defaultReps: e.target.value })} placeholder="8" /></div>
+                  <div><label>Type</label>
+                    <select value={form.defaultType} onChange={(e) => setForm({ ...form, defaultType: e.target.value })}>
+                      <option value="weight">Weight</option>
+                      <option value="time">Time</option>
+                    </select>
+                  </div>
+                  <div><label>Rest (sec)</label><input type="number" value={form.defaultRest} onChange={(e) => setForm({ ...form, defaultRest: e.target.value })} /></div>
+                </div>
+              </div>
+
+              <div><label>Description / coaching notes</label><textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="Technique cues, common mistakes, tempo guidance..." rows={3} style={{ resize: "vertical" }} /></div>
+              <div><label>Video URL (YouTube or Vimeo)</label><input value={form.videoUrl} onChange={(e) => setForm({ ...form, videoUrl: e.target.value })} placeholder="https://youtube.com/watch?v=..." /></div>
             </div>
             <div style={{ display: "flex", gap: "10px", marginTop: "20px", justifyContent: "flex-end" }}>
-              <button className="btn-ghost" onClick={() => setShowAdd(false)}>Cancel</button>
-              <button className="btn-primary" onClick={add}>Add to library</button>
+              <button className="btn-ghost" onClick={() => setShowModal(false)}>Cancel</button>
+              <button className="btn-primary" onClick={save}>{editingId ? "Save changes" : "Add to library"}</button>
             </div>
           </div>
         </div>
       )}
+
       {showVideo && (
         <div className="modal-overlay" onClick={() => setShowVideo(null)}>
           <div className="modal modal-lg" onClick={(e) => e.stopPropagation()}>
@@ -1483,11 +1638,50 @@ function ClientCalendar({ clientId }) {
   );
 }
 
+// ─── Rest Timer ───────────────────────────────────────────────────────────────
+function RestTimer({ seconds, onDone }) {
+  const [remaining, setRemaining] = useState(seconds);
+  const [running, setRunning] = useState(true);
+
+  useEffect(() => {
+    if (!running) return;
+    if (remaining <= 0) { onDone(); return; }
+    const t = setTimeout(() => setRemaining((r) => r - 1), 1000);
+    return () => clearTimeout(t);
+  }, [remaining, running]);
+
+  const pct = Math.round(((seconds - remaining) / seconds) * 100);
+  const color = remaining > 10 ? "var(--accent)" : remaining > 5 ? "var(--warning)" : "var(--danger)";
+
+  return (
+    <div style={{ background: "var(--surface)", border: "1px solid var(--border2)", borderRadius: "var(--radius-lg)", padding: "16px 20px", marginTop: "10px", display: "flex", alignItems: "center", gap: "16px", boxShadow: "var(--shadow-md)" }}>
+      <div style={{ position: "relative", width: "52px", height: "52px", flexShrink: 0 }}>
+        <svg width="52" height="52" style={{ transform: "rotate(-90deg)" }}>
+          <circle cx="26" cy="26" r="22" fill="none" stroke="var(--surface3)" strokeWidth="4" />
+          <circle cx="26" cy="26" r="22" fill="none" stroke={color} strokeWidth="4" strokeDasharray={138} strokeDashoffset={138 - (138 * pct / 100)} style={{ transition: "stroke-dashoffset 0.9s linear, stroke 0.3s" }} />
+        </svg>
+        <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "Syne, sans-serif", fontWeight: "800", fontSize: "15px", color }}>
+          {remaining}
+        </div>
+      </div>
+      <div style={{ flex: 1 }}>
+        <p style={{ fontWeight: "600", fontSize: "14px" }}>{running ? "Rest time" : "Resting..."}</p>
+        <p style={{ fontSize: "12px", color: "var(--text3)", marginTop: "2px" }}>{remaining > 0 ? "Next set coming up" : "Time's up — go!"}</p>
+      </div>
+      <div style={{ display: "flex", gap: "8px" }}>
+        <button className="btn-ghost btn-sm" onClick={() => setRunning((r) => !r)}>{running ? "Pause" : "Resume"}</button>
+        <button className="btn-primary btn-sm" onClick={onDone}>Skip →</button>
+      </div>
+    </div>
+  );
+}
+
 // ─── Client Workout ───────────────────────────────────────────────────────────
 function ClientWorkout({ client, clientId, programs, activeProg, setActiveProg, workoutStartTime }) {
   const [logs, setLogs] = useState({});
   const [showLogModal, setShowLogModal] = useState(false);
   const [showVideo, setShowVideo] = useState(null);
+  const [activeTimer, setActiveTimer] = useState(null); // { exId, setIdx, restSeconds }
   const prog = activeProg || programs[0] || null;
   const week = prog ? (prog.currentWeek || 1) : 1;
   const logKey = prog ? prog.id + "_w" + week : null;
@@ -1535,6 +1729,13 @@ function ClientWorkout({ client, clientId, programs, activeProg, setActiveProg, 
         <div className="prog-bar"><div className="prog-fill" style={{ width: pct + "%" }} /></div>
         <p style={{ fontSize: "12px", color: "var(--text3)", marginTop: "4px" }}>{completedSets}/{totalSets} sets done</p>
       </div>
+
+      {prog.programNotes && (
+        <div style={{ background: "var(--info-dim)", border: "1px solid rgba(26,110,217,0.15)", borderRadius: "var(--radius)", padding: "12px 16px", marginBottom: "16px" }}>
+          <p style={{ fontSize: "12px", fontWeight: "600", color: "var(--info)", marginBottom: "4px" }}>📋 Coach notes</p>
+          <p style={{ fontSize: "13px", color: "var(--text)", lineHeight: "1.6" }}>{prog.programNotes}</p>
+        </div>
+      )}
 
       {programs.length > 1 && (
         <div style={{ marginBottom: "16px" }}>
@@ -1585,7 +1786,13 @@ function ClientWorkout({ client, clientId, programs, activeProg, setActiveProg, 
                     <input type="number" className="set-input" value={s.weight || ""} placeholder="0" onChange={(e) => updateLog(ex.id, si, "weight", e.target.value)} />
                   ) : <div />}
                   <div style={{ display: "flex", justifyContent: "center" }}>
-                    <button onClick={() => updateLog(ex.id, si, "done", s.done ? false : true)}
+                    <button onClick={() => {
+                      const newDone = !s.done;
+                      updateLog(ex.id, si, "done", newDone);
+                      if (newDone && ex.restSeconds > 0) {
+                        setActiveTimer({ exId: ex.id, setIdx: si, restSeconds: ex.restSeconds || 60 });
+                      }
+                    }}
                       style={{ width: "34px", height: "34px", borderRadius: "50%", background: s.done ? "var(--accent)" : "var(--surface2)", border: "1.5px solid " + (s.done ? "var(--accent)" : "var(--border2)"), color: s.done ? "#fff" : "var(--text3)", fontSize: "16px", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: s.done ? "0 2px 8px rgba(77,184,42,0.25)" : "none" }}>
                       {s.done ? "✓" : "○"}
                     </button>
@@ -1598,7 +1805,16 @@ function ClientWorkout({ client, clientId, programs, activeProg, setActiveProg, 
       })}
 
       <div style={{ marginTop: "24px", marginBottom: "32px" }}>
-        <button className="btn-log" onClick={() => setShowLogModal(true)}>Log Workout ✓</button>
+        {activeTimer && (
+          <RestTimer
+            key={activeTimer.exId + "_" + activeTimer.setIdx}
+            seconds={activeTimer.restSeconds}
+            onDone={() => setActiveTimer(null)}
+          />
+        )}
+        <div style={{ marginTop: activeTimer ? "12px" : "0" }}>
+          <button className="btn-log" onClick={() => setShowLogModal(true)}>Log Workout ✓</button>
+        </div>
       </div>
 
       {showVideo && (
